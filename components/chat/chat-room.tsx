@@ -3313,22 +3313,26 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 content: `⚠️ ${errorPrefix}: ${error?.message || String(error)}`,
             });
             setMessages(prev => [...prev, errorMsg]);
-        } finally {
-            if (finishGenerationRun(session.id, generationRunId)) {
-                isGeneratingRef.current = false;
-                setIsGenerating(false);
-                clearGenerationLock(session.id);
-                if (!mountedRef.current) {
-                    window.dispatchEvent(new CustomEvent(CHAT_BG_COMPLETE, { detail: { sessionId: session.id } }));
-                }
-            } else if (!activeGenerationRuns.has(session.id)) {
-                // 本轮被外部取消且没有新一轮接手：仍需复位，否则「生成中」标记永久卡死，
-                // 后续联动/追问的回复请求会被静默吞掉
-                isGeneratingRef.current = false;
-                setIsGenerating(false);
-                clearGenerationLock(session.id);
-            }
+        }finally {
+    const isThisRunFinished = finishGenerationRun(session.id, generationRunId);
+
+    // 只要没有新的生成任务在跑，无论旧任务是否正常结束，强制重置状态，防止死锁
+    if (isThisRunFinished || !activeGenerationRuns.has(session.id)) {
+        isGeneratingRef.current = false;
+        setIsGenerating(false);
+        clearGenerationLock(session.id);
+
+        if (!mountedRef.current) {
+            window.dispatchEvent(new CustomEvent(CHAT_BG_COMPLETE, { detail: { sessionId: session.id } }));
         }
+
+        const latestMsgs = loadChatMessages(session.id);
+        const last = latestMsgs[latestMsgs.length - 1];
+        if (last && last.role === "user") {
+            setPendingGenerate(true);
+        }
+    }
+}
 
         if (shouldRunDeclineReply && onDecline) await onDecline();
     };
